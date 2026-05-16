@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SHL Chat - Simple Form</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .info {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: bold;
+        }
+        
+        input[type="text"],
+        textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: Arial, sans-serif;
+        }
+        
+        textarea {
+            height: 100px;
+            resize: vertical;
+        }
+        
+        input[type="text"]:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        button {
+            background: #667eea;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            width: 100%;
+        }
+        
+        button:hover {
+            background: #5568d3;
+        }
+        
+        .quick-tests {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .quick-btn {
+            padding: 8px 12px;
+            background: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .quick-btn:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+        
+        .response {
+            margin-top: 40px;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            display: none;
+        }
+        
+        .response.show {
+            display: block;
+        }
+        
+        .response h2 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+        
+        pre {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>💬 SHL Assessment Recommender Chat</h1>
+        <p class="info">Simple form-based chat interface. Submit your message and see the JSON response below.</p>
+        
+        <form onsubmit="submitForm(event)">
+            <div class="form-group">
+                <label>Quick Tests:</label>
+                <div class="quick-tests">
+                    <button type="button" class="quick-btn" onclick="setMessage('I need an assessment')">Vague Query</button>
+                    <button type="button" class="quick-btn" onclick="setMessage('Java developer, senior level, 8+ years')">Java Senior</button>
+                    <button type="button" class="quick-btn" onclick="setMessage('Java developer, senior, need personality and leadership assessment')">Java + Personality</button>
+                    <button type="button" class="quick-btn" onclick="setMessage('Compare OPQ and GSA')">Compare OPQ vs GSA</button>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="message">Your Message:</label>
+                <textarea id="message" name="message" placeholder="Type your hiring query here..." required>Java developer, senior level</textarea>
+            </div>
+            
+            <button type="submit">Send to Agent</button>
+        </form>
+        
+        <div id="response" class="response">
+            <h2>Response from Agent:</h2>
+            <pre id="responseText"></pre>
+        </div>
+    </div>
+
+    <script>
+        function setMessage(text) {
+            document.getElementById('message').value = text;
+        }
+        
+        function submitForm(event) {
+            event.preventDefault();
+            
+            const message = document.getElementById('message').value;
+            
+            // Create FormData for POST request
+            const formData = new FormData();
+            formData.append('message', message);
+            
+            // Fetch with POST
+            fetch('https://shl-research-intern-u95m.onrender.com/chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    messages: [{
+                        role: 'user',
+                        content: message
+                    }]
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                // Display response
+                const responseDiv = document.getElementById('response');
+                const responseText = document.getElementById('responseText');
+                responseText.textContent = JSON.stringify(data, null, 2);
+                responseDiv.classList.add('show');
+            })
+            .catch(error => {
+                const responseDiv = document.getElementById('response');
+                const responseText = document.getElementById('responseText');
+                responseText.textContent = 'Error: ' + error.message;
+                responseDiv.classList.add('show');
+            });
+        }
+    </script>
+</body>
+</html>

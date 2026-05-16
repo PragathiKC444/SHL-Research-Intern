@@ -46,6 +46,16 @@ def test_schema_and_catalog_only_for_recommendation_flow() -> None:
     _assert_catalog_only_recommendations(payload)
 
 
+def test_only_required_routes_are_exposed() -> None:
+    root = client.get("/")
+    chat_get = client.get("/chat")
+    health = client.get("/health")
+
+    assert root.status_code == 404
+    assert chat_get.status_code == 405
+    assert health.status_code == 200
+
+
 def test_turn_cap_honored_at_8_total_messages() -> None:
     response = client.post(
         "/chat",

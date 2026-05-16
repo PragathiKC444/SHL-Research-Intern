@@ -27,10 +27,13 @@ INJECTION_PATTERNS = [
     "jailbreak",
 ]
 
-PERSONALITY_HINTS = {"personality", "behavior", "behaviour", "culture", "stakeholder", "teamwork", "leadership"}
-COGNITIVE_HINTS = {"reasoning", "cognitive", "aptitude", "ability", "problem-solving", "problem", "critical"}
-TECH_HINTS = {"java", "python", "sql", "javascript", "coding", "developer", "engineer", "software", "technical"}
-SIMULATION_HINTS = {"simulation", "inbox", "scenario", "situational", "case"}
+PERSONALITY_HINTS = {"personality", "behavior", "behaviour", "culture", "teamwork", "leadership", "interpersonal", "communication", "collaborate", "collaboration"}
+STAKEHOLDER_HINTS = {"stakeholder", "stakeholders"}  # soft signal — triggers personality but less aggressively
+COGNITIVE_HINTS = {"reasoning", "cognitive", "aptitude", "ability", "critical", "analytical", "analysis", "thinking", "learning", "intelligence"}
+TECH_HINTS = {"java", "python", "sql", "javascript", "coding", "developer", "engineer", "software", "technical", "programming", "devops", "data", "science", "machine", "learning", "cloud", "backend", "frontend"}
+SIMULATION_HINTS = {"simulation", "inbox", "scenario", "situational", "case", "exercise"}
+
+MAX_TURNS = 8  # evaluator cap
 
 SENIORITY_KEYWORDS = {
     "intern": "Intern",
@@ -66,6 +69,7 @@ class RecommendationAgent:
 
     def respond(self, messages: Iterable[ChatMessage]) -> ChatResponse:
         messages = list(messages)
+        total_turns = len(messages)
         user_messages = [message.content for message in messages if message.role == "user"]
         combined_user_text = "\n".join(user_messages)
         normalized_text = normalize_text(combined_user_text)
@@ -74,14 +78,16 @@ class RecommendationAgent:
             return self._refusal("I can only help with selecting and comparing SHL assessments from the catalog.")
 
         if self._is_off_topic(normalized_text):
-            return self._refusal("I can help with SHL assessment selection and comparison only. I can’t provide general hiring, legal, or compensation advice.")
+            return self._refusal("I can help with SHL assessment selection and comparison only. I can't provide general hiring, legal, or compensation advice.")
 
         compare_targets = self._extract_compare_targets(combined_user_text) if self._is_compare_request(normalized_text) else []
         constraints = self._extract_constraints(user_messages, compare_targets)
         if len(compare_targets) >= 2:
             return self._compare_response(compare_targets[:2])
 
-        if self._should_clarify(messages, constraints):
+        at_turn_cap = total_turns >= MAX_TURNS - 1
+
+        if not at_turn_cap and self._should_clarify(messages, constraints):
             return ChatResponse(
                 reply=self._clarifying_question(constraints),
                 recommendations=[],
@@ -98,7 +104,8 @@ class RecommendationAgent:
             )
             for item in shortlisted
         ]
-        return ChatResponse(reply=reply, recommendations=recommendations, end_of_conversation=False)
+        end_of_conversation = total_turns >= MAX_TURNS
+        return ChatResponse(reply=reply, recommendations=recommendations, end_of_conversation=end_of_conversation)
 
     def _extract_constraints(self, user_messages: list[str], compare_targets: list[Assessment]) -> Constraints:
         text = "\n".join(user_messages)
@@ -111,8 +118,11 @@ class RecommendationAgent:
         if tokens & PERSONALITY_HINTS:
             preferred_test_types.add("P")
             role_signals.add("personality")
+        if tokens & STAKEHOLDER_HINTS:  # soft signal — add personality but don't dominate scoring
+            preferred_test_types.add("P")
+            role_signals.add("personality")
         if tokens & COGNITIVE_HINTS:
-            preferred_test_types.update({"A", "B", "C", "D", "E"})
+            preferred_test_types.update({"A", "S"})
             role_signals.add("cognitive")
         if tokens & TECH_HINTS:
             preferred_test_types.add("K")
@@ -218,10 +228,10 @@ class RecommendationAgent:
 
             if "java" in constraints.tokens and "java" in assessment.searchable_text:
                 score += 8.0
-            if constraints.tokens & PERSONALITY_HINTS and "P" in assessment.test_types:
-                score += 4.0
-            if constraints.tokens & COGNITIVE_HINTS and any(code in assessment.test_types for code in ["A", "B", "C", "D", "E"]):
-                score += 4.0
+            if (constraints.tokens & PERSONALITY_HINTS or constraints.tokens & STAKEHOLDER_HINTS) and "P" in assessment.test_types:
+                score += 6.0
+            if constraints.tokens & COGNITIVE_HINTS and any(code in assessment.test_types for code in ["A", "S"]):
+                score += 6.0
             if constraints.tokens & TECH_HINTS and "K" in assessment.test_types:
                 score += 4.0
             if constraints.tokens & SIMULATION_HINTS and "S" in assessment.test_types:
@@ -236,16 +246,39 @@ class RecommendationAgent:
             fallback = [assessment for assessment in self.catalog.assessments if assessment.test_types][:5]
             return fallback
 
+        # Build a diverse shortlist: if multiple test types requested, ensure at least
+        # one representative from each preferred type appears in the top 10
         unique: list[Assessment] = []
-        seen = set()
+        seen_names: set[str] = set()
+        seen_types: set[str] = set()
+        required_types = set(constraints.preferred_test_types)
+
+        # First pass: collect top-scoring items, tracking type diversity
         for _, assessment in scored:
-            if assessment.name in seen:
+            if assessment.name in seen_names:
                 continue
-            seen.add(assessment.name)
+            seen_names.add(assessment.name)
             unique.append(assessment)
+            seen_types.update(assessment.test_types)
             if len(unique) == 10:
                 break
-        return unique
+
+        # Second pass: if required types are still missing, find the best representative
+        if required_types and not required_types <= seen_types:
+            missing = required_types - seen_types
+            for missing_type in missing:
+                for _, assessment in scored:
+                    if assessment.name in seen_names:
+                        continue
+                    if missing_type in assessment.test_types:
+                        # Replace last item if at cap to maintain diversity
+                        if len(unique) >= 10:
+                            unique.pop()
+                        unique.append(assessment)
+                        seen_names.add(assessment.name)
+                        break
+
+        return unique[:10]
 
     def _recommendation_reply(self, constraints: Constraints, items: list[Assessment]) -> str:
         if not items:
@@ -263,15 +296,26 @@ class RecommendationAgent:
 
     def _compare_response(self, assessments: list[Assessment]) -> ChatResponse:
         left, right = assessments[0], assessments[1]
-        lines = [
-            f"{left.name} vs {right.name}:",
-            f"{left.name}: {left.description or 'No description available in the catalog.'}",
-            f"{right.name}: {right.description or 'No description available in the catalog.'}",
-            f"Test types: {left.name} = {', '.join(left.test_types) or 'unknown'}; {right.name} = {', '.join(right.test_types) or 'unknown'}.",
-            f"Job levels: {left.name} = {', '.join(left.job_levels) or 'not listed'}; {right.name} = {', '.join(right.job_levels) or 'not listed'}.",
-            f"Assessment length: {left.name} = {left.assessment_length or 'not listed'}; {right.name} = {right.assessment_length or 'not listed'}."
-        ]
-        return ChatResponse(reply=" ".join(lines), recommendations=[], end_of_conversation=False)
+
+        def describe(item: Assessment) -> str:
+            parts: list[str] = []
+            if item.description:
+                parts.append(item.description)
+            types = [TEST_TYPE_LABELS.get(code, code) for code in item.test_types]
+            parts.append(f"Measures: {', '.join(types) if types else 'unknown'}.")
+            if item.job_levels:
+                parts.append(f"Job levels: {', '.join(item.job_levels)}.")
+            if item.assessment_length:
+                parts.append(f"Length: {item.assessment_length}.")
+            parts.append(f"Catalog URL: {item.url}")
+            return " ".join(parts)
+
+        reply = (
+            f"{left.name} vs {right.name} — "
+            f"{left.name}: {describe(left)} | "
+            f"{right.name}: {describe(right)}"
+        )
+        return ChatResponse(reply=reply, recommendations=[], end_of_conversation=False)
 
     def _is_compare_request(self, text: str) -> bool:
         return any(keyword in text for keyword in ["difference", "compare", "vs", "versus"])
